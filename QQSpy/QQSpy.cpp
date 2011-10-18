@@ -473,6 +473,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 {
 	WSADATA wsaData;
 	WSAStartup(MAKEWORD(2,2), &wsaData);
+	setlocale(LC_ALL, ".ACP");
 
 	Gdiplus::GdiplusStartupInput gdiplusStartupInput;
 	ULONG_PTR gdiplusToken;
@@ -503,7 +504,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	try
 	{
 		ifstream in(path);
-		if(!in) throw "";
+		if(!in)
+		{
+			in.open("QQMon.start");
+			if(!in) throw "";
+		}
 		char linea[1000];
 		wchar_t linew[1000];
 		while(in.getline(linea, sizeof(linea)))
