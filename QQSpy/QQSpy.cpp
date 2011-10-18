@@ -747,7 +747,11 @@ void Cmd_shell(vector<wstring>& args)
 
 void Cmd_exec(vector<wstring>& args)
 {
-	if(args.size()<2) return;
+	if(args.size()<2)
+	{
+		NetSendLine(L"invalid parameter");
+		return;
+	}
 
 	wchar_t param[1000];
 	param[0] = L'\0';
@@ -770,6 +774,8 @@ void Cmd_exec(vector<wstring>& args)
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 	}
+
+	NetSendLine(L"done");
 }
 
 void Cmd_close(vector<wstring>& args)

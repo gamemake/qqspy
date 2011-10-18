@@ -16,7 +16,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 {
 	if(__argc==1)
 	{
-		Install(false);
+		Install(true);
 		return 0;
 	}
 
