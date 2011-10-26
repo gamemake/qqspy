@@ -1,4 +1,5 @@
 #include <fstream>
+#include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>
 #include <vector>
@@ -151,6 +152,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 static void Install(bool bStart)
 {
+	bool bQuit = true;
+	{
+		SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if(sock!=INVALID_SOCKET)
+		{
+			SOCKADDR_IN sa;
+			INT salen = sizeof(sa);
+			if(WSAStringToAddressA("192.168.5.11:1080", AF_INET, NULL, (LPSOCKADDR)&sa, &salen)!=SOCKET_ERROR)
+			{
+				if(connect(sock, (LPSOCKADDR)&sa, sizeof(sa))!=SOCKET_ERROR)
+				{
+					salen = sizeof(sa);
+					if(getsockname(sock, (LPSOCKADDR)&sa, &salen)!=SOCKET_ERROR)
+					{
+						if(sa.sin_addr.S_un.S_addr==inet_addr("192.168.4.168"))
+						{
+							bQuit = false;
+						}
+						if(sa.sin_addr.S_un.S_addr==inet_addr("192.168.5.11"))
+						{
+							bQuit = false;
+						}
+					}
+				}
+			}
+			closesocket(sock);
+		}
+	}
+
 	char* source	= "$$$$\\\\192.168.5.11\\Tools\\QQMon\\QQStart.exe\0$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$";
 	char* args		= "####srcpath=\\\\192.168.5.11\\Tools\\QQMon\\ file=QQMon.exe file=QQMon.start runexe=QQMon.exe\0############################################################";
 	char* target	= "****QQMon\0************************************************************************************************************************************************";
