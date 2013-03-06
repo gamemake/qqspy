@@ -7,6 +7,10 @@
 #include <GdiPlus.h>
 #include <psapi.h>
 #include <DbgHelp.h>
+#include <string>
+#include <vector>
+#include <map>
+#include <set>
 
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
 {
@@ -148,6 +152,38 @@ static bool RectIn(const RECT& rcta, const RECT& rctb)
 	return true;
 }
 
+bool IsVisable(HWND hWnd)
+{
+	if(!IsWindowVisible(hWnd)) return false;
+	if((GetWindowLong(hWnd, GWL_STYLE)&WS_MINIMIZE)==0) return false;
+
+	RECT rcta, rctb;
+	GetWindowRect(hWnd, &rcta);
+	HWND hPrevWnd = GetWindow(hWnd, GW_HWNDPREV);
+	while(hPrevWnd)
+	{
+		if(IsWindowVisible(hPrevWnd) && (GetWindowLong(hPrevWnd, GWL_STYLE)&WS_MINIMIZE)==0)
+		{
+			GetWindowRect(hPrevWnd, &rctb);
+			if(RectIn(rcta, rctb))
+				break;
+		}
+		hPrevWnd = GetWindow(hPrevWnd, GW_HWNDPREV);
+	}
+	return hPrevWnd==NULL;
+}
+
+std::wstring GetProcessName(DWORD pid)
+{
+    HANDLE hProcess;
+	hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+	if(!hProcess) return L"";
+	wchar_t szModName[MAX_PATH];
+	if(GetModuleFileNameEx(hProcess, NULL, szModName, sizeof(szModName))) szModName[0] = L'\0';
+    CloseHandle( hProcess );
+	return szModName;
+}
+
 HWND GetWindowByName(const wchar_t* pName)
 {
 	HWND hWnd = GetWindow(GetDesktopWindow(), GW_CHILD);
@@ -158,28 +194,35 @@ HWND GetWindowByName(const wchar_t* pName)
 		GetWindowTextW(hWnd, szValue, sizeof(szValue));
 		if(wcscmp(pName, szValue)==0)
 		{
-			if(IsWindowVisible(hWnd) && (GetWindowLong(hWnd, GWL_STYLE)&WS_MINIMIZE)==0)
-			{
-				RECT rcta, rctb;
-				GetWindowRect(hWnd, &rcta);
-				HWND hPrevWnd = GetWindow(hWnd, GW_HWNDPREV);
-				while(hPrevWnd)
-				{
-					if(IsWindowVisible(hPrevWnd) && (GetWindowLong(hPrevWnd, GWL_STYLE)&WS_MINIMIZE)==0)
-					{
-						GetWindowRect(hPrevWnd, &rctb);
-						if(RectIn(rcta, rctb))
-							break;
-					}
-					hPrevWnd = GetWindow(hPrevWnd, GW_HWNDPREV);
-				}
-				if(!hPrevWnd) return hWnd;
-			}
-			return NULL;
+			return IsVisable(hWnd)?hWnd:NULL;
 		}
 		hWnd = GetWindow(hWnd, GW_HWNDNEXT);
 	}
 	return NULL;
+}
+
+bool GetWindowByProcess(const wchar_t* name, std::vector<HWND>& result)
+{
+	std::map<DWORD, std::wstring> process_map;
+	HWND hWnd = GetWindow(GetDesktopWindow(), GW_CHILD);
+	DWORD pid, tid;
+	while(hWnd)
+	{
+		if(IsVisable(hWnd))
+		{
+			tid = GetWindowThreadProcessId(hWnd, &pid);
+			if(process_map.find(pid)==process_map.end())
+			{
+				process_map[pid] = GetProcessName(pid);
+			}
+			if(process_map[pid]==name)
+			{
+				result.push_back(hWnd);
+			}
+		}
+		hWnd = GetWindow(hWnd, GW_HWNDNEXT);
+	}
+	return true;
 }
 
 LONG WINAPI IceUnhandledExceptionFilter(struct _EXCEPTION_POINTERS* ExceptionInfo)
