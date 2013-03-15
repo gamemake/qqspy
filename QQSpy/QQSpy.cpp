@@ -48,21 +48,25 @@ int Xmemcmp(const byte* a, const byte* b, int size)
 	return count;
 }
 
-struct CHECK_ITEM
+class WndItem
 {
-	CHECK_ITEM()
+public:
+	WndItem()
 	{
-		wcscpy(name, L"UNKNOWN");
 		count = 0;
 		old_p = NULL;
 	}
-	wchar_t name[100];
+	~WndItem()
+	{
+		if(old_p) free(old_p);
+		old_p = NULL;
+	}
 	int count;
 	byte* old_p;
 	int old_width, old_height, old_bitcount;
 };
 
-bool ScreenToBMP(const wchar_t* pFileName, HWND hWnd, CHECK_ITEM* item)
+bool ScreenToBMP(const wchar_t* pFileName, HWND hWnd, WndItem* item)
 {
 	int nX, nY, nWidth, nHeight;
 	RECT rct;
@@ -71,6 +75,8 @@ bool ScreenToBMP(const wchar_t* pFileName, HWND hWnd, CHECK_ITEM* item)
 	nY = rct.top  + 10 + 80;
 	nWidth = rct.right   - rct.left - 20 - 150;
 	nHeight = rct.bottom - rct.top  - 20 - 80 - 130;
+	if(nWidth>2000 || nHeight>2000 || nWidth<50 || nHeight<50) return false;
+	if(nWidth*2<nHeight) return false;
 
 	HDC hScreenDC = CreateDCW(L"DISPLAY", NULL, NULL, NULL);// GetDC(NULL);
 	HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, nWidth, nHeight);
@@ -154,8 +160,12 @@ static bool RectIn(const RECT& rcta, const RECT& rctb)
 
 bool IsVisable(HWND hWnd)
 {
+	wchar_t name[100];
+	GetWindowTextW(hWnd, name, 100);
+
+
 	if(!IsWindowVisible(hWnd)) return false;
-	if((GetWindowLong(hWnd, GWL_STYLE)&WS_MINIMIZE)==0) return false;
+	if((GetWindowLong(hWnd, GWL_STYLE)&WS_MINIMIZE)!=0) return false;
 
 	RECT rcta, rctb;
 	GetWindowRect(hWnd, &rcta);
@@ -175,12 +185,18 @@ bool IsVisable(HWND hWnd)
 
 std::wstring GetProcessName(DWORD pid)
 {
+	wchar_t szModName[MAX_PATH] = L"UNKNOWN";
     HANDLE hProcess;
 	hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-	if(!hProcess) return L"";
-	wchar_t szModName[MAX_PATH];
-	if(GetModuleFileNameEx(hProcess, NULL, szModName, sizeof(szModName))) szModName[0] = L'\0';
-    CloseHandle( hProcess );
+	if(hProcess)
+	{
+		if(GetModuleFileNameEx(hProcess, NULL, szModName, sizeof(szModName)))
+		{
+			wchar_t* pos = wcsrchr(szModName, L'\\');
+			memmove(szModName, pos+1, sizeof(wchar_t)*(wcslen(pos+1)+1));
+		}
+		CloseHandle( hProcess );
+	}
 	return szModName;
 }
 
@@ -215,9 +231,28 @@ bool GetWindowByProcess(const wchar_t* name, std::vector<HWND>& result)
 			{
 				process_map[pid] = GetProcessName(pid);
 			}
-			if(process_map[pid]==name)
+			const wchar_t* pos = wcschr(name, L'@');
+			if(pos)
 			{
-				result.push_back(hWnd);
+				if(wcsicmp(process_map[pid].c_str(), pos+1)==0)
+				{
+					wchar_t wndcls[100];
+					if(GetClassNameW(hWnd, wndcls, sizeof(wndcls))!=0)
+					{
+						size_t len = wcslen(wndcls);
+						if(len==pos-name && memcmp(name, wndcls, sizeof(wchar_t)*len)==0)
+						{
+							result.push_back(hWnd);
+						}
+					}
+				}
+			}
+			else
+			{
+				if(wcsicmp(process_map[pid].c_str(), name)==0)
+				{
+					result.push_back(hWnd);
+				}
 			}
 		}
 		hWnd = GetWindow(hWnd, GW_HWNDNEXT);
@@ -496,8 +531,8 @@ void NetUnbind()
 #include <fstream>
 
 static LPTOP_LEVEL_EXCEPTION_FILTER g_oldUEF;
-static CHECK_ITEM g_List[100];
-static int g_ListCount = 0;
+static std::map<HWND, WndItem> g_wnd_map;
+static std::map<std::wstring, int> g_check_list;
 static wchar_t g_SavePath[MAX_PATH] = L"";
 static void Cmd_screenshot(vector<wstring>& args);
 static void Cmd_append(vector<wstring>& args);
@@ -570,14 +605,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	{
 		NetTick(1000);
 
-		for(int i=0; i<g_ListCount; i++)
+		std::map<std::wstring, int>::iterator i;
+		std::set<HWND> cur_wnd;
+		for(i=g_check_list.begin(); i!=g_check_list.end(); i++)
+		{
+			if(i->second==0)
+			{
+				HWND hWnd = GetWindowByName(i->first.c_str());
+				if(hWnd) cur_wnd.insert(hWnd);
+			}
+			else
+			{
+				std::vector<HWND> result;
+				if(GetWindowByProcess(i->first.c_str(), result))
+				{
+					for(size_t r=0; r<result.size(); r++)
+					{
+						cur_wnd.insert(result[r]);
+					}
+				}
+			}
+		}
+
+		std::set<HWND>::iterator j;
+		for(j=cur_wnd.begin(); j!=cur_wnd.end(); j++)
 		{
 			wchar_t fn[1000];
-			swprintf(fn, L"%s%s-%I64d-%010d.jpeg", g_SavePath, g_List[i].name, t, g_List[i].count);
-			HWND hWnd = GetWindowByName(g_List[i].name);
-			if(hWnd && ScreenToBMP(fn, hWnd, &g_List[i]))
+			HWND hWnd = *j;
+			swprintf(fn, L"%s%p-%I64d-%010d.jpeg", g_SavePath, hWnd, t, g_wnd_map[hWnd].count);
+			if(ScreenToBMP(fn, hWnd, &g_wnd_map[hWnd]))
 			{
-				g_List[i].count++;
+				g_wnd_map[hWnd].count++;
 			}
 		}
 	}
@@ -627,30 +685,25 @@ void Cmd_screenshot(vector<wstring>& args)
 
 void Cmd_append(vector<wstring>& args)
 {
-	if(args.size()!=2)
+	if(args.size()!=3)
 	{
 		NetSendLine(L"invalid parameter");
 		return;
 	}
 
-	if(g_ListCount>=sizeof(g_List)/sizeof(g_List[0]))
+	if(args[1]==L"name")
 	{
-		NetSendLine(L"too many.");
+		g_check_list[args[2]] = 0;
+	}
+	else if(args[1]==L"proc")
+	{
+		g_check_list[args[2]] = 1;
+	}
+	else
+	{
+		NetSendLine(L"invalid parameter.");
 		return;
 	}
-
-	for(int i=0; i<g_ListCount; i++)
-	{
-		if(wcscmp(g_List[i].name, args[1].c_str())==0)
-		{
-			NetSendLine(L"already existed.");
-			return;
-		}
-	}
-
-	wcscpy(g_List[g_ListCount].name, args[1].c_str());
-	g_List[g_ListCount].old_p = NULL;
-	g_ListCount++;
 
 	NetSendLine(L"done.");
 }
@@ -663,27 +716,26 @@ void Cmd_delete(vector<wstring>& args)
 		return;
 	}
 
-	for(int i=0; i<g_ListCount; i++)
+	std::map<std::wstring, int>::iterator i;
+	i = g_check_list.find(args[1]);
+	if(i==g_check_list.end())
 	{
-		if(wcscmp(g_List[i].name, args[1].c_str())==0)
-		{
-			if(g_List[i].old_p) delete [] g_List[i].old_p;
-			memmove(g_List+i, g_List+i+1, sizeof(g_List[0])*(g_ListCount-i-1));
-			g_ListCount--;
-			NetSendLine(L"done.");
-			return;
-		}
+		NetSendLine(L"not found.");
 	}
-
-	NetSendLine(L"not found.");
+	else
+	{
+		g_check_list.erase(i);
+		NetSendLine(L"done.");
+	}
 }
 
 void Cmd_list(vector<wstring>& args)
 {
-	for(int i=0; i<g_ListCount; i++)
+	std::map<std::wstring, int>::iterator i;
+	for(i=g_check_list.begin(); i!=g_check_list.end(); i++)
 	{
 		wchar_t line[100];
-		swprintf(line, sizeof(line), L"%03d %s", i, g_List[i].name);
+		swprintf(line, sizeof(line), L"%s %s", i->second==0?L"name":L"proc", i->first.c_str());
 		NetSendLine(line);
 	}
 
